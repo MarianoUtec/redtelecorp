@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Red TeleCorp</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+<div id="app"></div>
+<script>
+// Cambiar solo si el backend se redespliega con otra URL
+const API="https://ylermdnycj.execute-api.us-east-1.amazonaws.com/dev";
+
+const ZONES={"ZONA-HOSP-01":"Hospitalaria (crítica)","ZONA-IND-01":"Industrial (crítica)","ZONA-CENTRO-01":"Centro financiero (alta)","ZONA-UNIV-01":"Universitaria (alta)","ZONA-ESTE-01":"Corredor Este (alta)","ZONA-SUR-01":"Residencial Sur","ZONA-NORTE-01":"Residencial Norte","ZONA-OESTE-01":"Residencial Oeste"};
+const TYPES={SIN_COBERTURA:"Sin cobertura",INTERNET_LENTO:"Internet lento",FALLA_LLAMADAS:"Falla en llamadas",FALLA_SMS:"Falla en SMS",INTERMITENCIA:"Intermitencia"};
+const STATES=["REGISTRADA","EN_REVISION","ATENDIDA","SOLUCIONADA","CERRADA"];
+const NAV={USUARIO:[["report","Reportar"],["mine","Mis reportes"]],OPERADOR:[["ops","Incidencias"],["antennas","Antenas"],["analytics","Analítica"],["report","Reportar"]]};
+NAV.ADMINISTRADOR=NAV.OPERADOR;
+const SC={NORMAL:"bg-emerald-600",CAIDA:"bg-orange-600",SATURADA:"bg-fuchsia-700",INHABILITADA:"bg-red-600",REGISTRADA:"bg-slate-600",EN_REVISION:"bg-amber-600",ATENDIDA:"bg-sky-700",SOLUCIONADA:"bg-emerald-700",CERRADA:"bg-slate-500",P1:"bg-red-600",P2:"bg-orange-600",P3:"bg-amber-600",P4:"bg-slate-600"};
+
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt=t=>t?new Date(t).toLocaleString("es-PE"):"";
+const badge=(t,c)=>`<span class="px-2 py-0.5 rounded text-xs font-semibold text-white ${c}">${esc(t)}</span>`;
+const B=t=>badge(t,SC[t]||"bg-slate-600");
+const inp="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500";
+const btn="bg-sky-600 hover:bg-sky-500 rounded-lg px-4 py-2 font-medium";
+const card=(h,b)=>`<section class="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-4"><h2 class="font-semibold mb-3">${h}</h2>${b}</section>`;
+const opts=(o,sel)=>Object.entries(o).map(([k,v])=>`<option value="${k}" ${k==sel?"selected":""}>${v}</option>`).join("");
+const bar=(l,v,m)=>`<div class="mb-2"><div class="flex justify-between text-sm"><span>${esc(l)}</span><span>${v}</span></div><div class="h-2 bg-slate-800 rounded"><div class="h-2 bg-sky-500 rounded" style="width:${m?v/m*100:0}%"></div></div></div>`;
+
+let S=JSON.parse(localStorage.getItem("tc")||"null");
+let F={zone_id:"",status:""};
+let A="ANT-501";
+const save=v=>{S=v;v?localStorage.setItem("tc",JSON.stringify(v)):localStorage.removeItem("tc")};
+
+async function api(p,o={},tk){
+  tk=tk===undefined?(S&&S.token):tk;
+  const r=await fetch(API+p,{method:o.method||"GET",headers:{"Content-Type":"application/json",...(tk?{Authorization:"Bearer "+tk}:{})},body:o.body?JSON.stringify(o.body):undefined});
+  const j=await r.json().catch(()=>({}));
+  if(r.status===401&&S&&p!=="/auth/login"){save(null);location.hash="#login";render()}
+  if(!r.ok||j.success===false)throw new Error((j.error&&j.error.message)||j.message||"Error "+r.status);
+  return j.data;
+}
+function toast(m,err){const d=document.createElement("div");d.className="fixed bottom-4 right-4 px-4 py-2 rounded-lg shadow-lg text-white z-50 "+(err?"bg-red-600":"bg-emerald-600");d.textContent=m;document.body.append(d);setTimeout(()=>d.remove(),4500)}
+const run=f=>f().catch(e=>toast(e.message,1));
+
+function login(u,p){run(async()=>{const d=await api("/auth/login",{method:"POST",body:{username:u,password:p}},null);save({token:d.token,user:d.user});location.hash="#"+NAV[d.user.role][0][0];render()})}
+function sendReport(e){e.preventDefault();const f=e.target.elements;run(async()=>{const d=await api("/incidents",{method:"POST",body:{zone_id:f.zone.value,problem_type:f.type.value,phone:f.phone.value,description:f.desc.value}});toast("Ticket "+d.incident_id+" registrado");e.target.reset()});return false}
+function setStatus(b){run(async()=>{const r=b.closest("[data-id]");await api("/incidents/"+encodeURIComponent(r.dataset.id)+"/status",{method:"PATCH",body:{status:r.querySelector("select").value,note:r.querySelector("input").value}});toast("Estado actualizado");render()})}
+function sim(v){run(async()=>{await api("/antennas/metrics",{method:"POST",body:{antenna_id:A,traffic_gb_min:v}},null);toast(A+": "+v+" GB/min enviado");render()})}
+function storm(){run(async()=>{const z=$("#sz").value;toast("Enviando 10 reportes a "+z);for(let i=1;i<=10;i++){const d=await api("/auth/login",{method:"POST",body:{username:"cliente"+i+"@test.com",password:"x"}},null);await api("/incidents",{method:"POST",body:{zone_id:z,problem_type:"SIN_COBERTURA",phone:"+5190000000"+i,description:"Sin señal (simulación "+i+")"}},d.token)}toast("Listo: revisa el panel de incidencias");render()})}
+
+function incRow(i,ops){
+  const hs=i.history||[];
+  const h=hs.map(x=>`<li>${fmt(x.timestamp)}: ${x.from_status?x.from_status+" → ":""}<b>${x.to_status}</b> ${esc(x.note)}</li>`).join("");
+  return `<div data-id="${esc(i.incident_id)}" class="border border-slate-800 rounded-lg p-3 mb-3">
+  <div class="flex flex-wrap gap-2 items-center justify-between"><b>${esc(i.incident_id)}</b><span class="flex gap-2">${B(i.status)}${i.collective_id?badge("Colectivo","bg-red-700"):""}</span></div>
+  <div class="text-sm text-slate-400">${ZONES[i.zone_id]||esc(i.zone_id)} · ${TYPES[i.problem_type]||esc(i.problem_type)} · ${fmt(i.created_at)}${ops?" · "+esc(i.user_id):""}</div>
+  <p class="my-2">${esc(i.description)}</p>
+  <details class="text-sm text-slate-400"><summary class="cursor-pointer">Historial (${hs.length})</summary><ul class="list-disc ml-5 mt-1">${h}</ul></details>
+  ${ops?`<div class="flex flex-wrap gap-2 mt-3"><select class="${inp} !w-auto">${STATES.map(s=>`<option ${s==i.status?"selected":""}>${s}</option>`).join("")}</select><input class="${inp} !w-auto flex-1" placeholder="Nota para el historial"><button class="${btn}" onclick="setStatus(this)">Actualizar estado</button></div>`:""}</div>`;
+}
+
+const views={
+  login:async()=>card("Iniciar sesión",`<div class="grid gap-3 max-w-sm">
+    <input id="u" class="${inp}" placeholder="Correo"><input id="p" type="password" class="${inp}" placeholder="Contraseña">
+    <button class="${btn}" onclick="login($('#u').value,$('#p').value)">Entrar</button>
+    <div class="text-sm text-slate-400">Cuentas de demostración
+    <div class="flex gap-4 mt-2"><button class="underline" onclick="login('usuario@telecorp.com','user123')">Cliente</button><button class="underline" onclick="login('operador@telecorp.com','tech123')">Operador</button><button class="underline" onclick="login('admin@telecorp.com','admin123')">Administrador</button></div></div></div>`),
+
+  report:async()=>card("Reportar un problema con mi servicio",`<form onsubmit="return sendReport(event)" class="grid gap-3 max-w-xl">
+    <label>Zona<select name="zone" class="${inp}">${opts(ZONES)}</select></label>
+    <label>Tipo de problema<select name="type" class="${inp}">${opts(TYPES)}</select></label>
+    <label>Número del servicio<input name="phone" required class="${inp}" placeholder="+51 987 654 321"></label>
+    <label>Qué ocurrió<textarea name="desc" required rows="3" class="${inp}" placeholder="Describe el problema"></textarea></label>
+    <button class="${btn}">Enviar reporte</button></form>`),
+
+  mine:async()=>{const d=await api("/incidents/my-reports");const l=d.incidents.sort((a,b)=>b.created_at>a.created_at?1:-1);
+    return card("Mis reportes ("+d.total+")",l.map(i=>incRow(i,false)).join("")||"Aún no registraste reportes. Usa Reportar para crear el primero.")},
+
+  ops:async()=>{
+    const q=new URLSearchParams(Object.fromEntries(Object.entries(F).filter(e=>e[1]))).toString();
+    const [c,l]=await Promise.all([api("/collective-events"),api("/incidents?"+q)]);
+    const ev=c.collective_events.map(e=>`<div class="border border-slate-800 rounded-lg p-3 mb-2 flex flex-wrap gap-2 justify-between items-center"><div><b>${esc(e.collective_id)}</b><div class="text-sm text-slate-400">${ZONES[e.zone_id]||esc(e.zone_id)} · ${e.affected_users_count} usuarios · ${e.root_cause_confirmed?"causa raíz confirmada":"causa raíz sin confirmar"}</div></div><span class="flex gap-2">${B(e.priority)}${B(e.antenna_status)}${badge(e.state,"bg-slate-600")}</span></div>`).join("");
+    const items=l.incidents.sort((a,b)=>b.created_at>a.created_at?1:-1);
+    return card("Incidentes colectivos ("+c.total+")",ev||"Sin incidentes colectivos")+
+      card("Incidencias ("+l.total+")",`<div class="flex gap-2 mb-3"><select class="${inp} !w-auto" onchange="F.zone_id=this.value;render()"><option value="">Todas las zonas</option>${opts(ZONES,F.zone_id)}</select><select class="${inp} !w-auto" onchange="F.status=this.value;render()"><option value="">Todos los estados</option>${STATES.map(s=>`<option ${s==F.status?"selected":""}>${s}</option>`).join("")}</select></div>`+(items.map(i=>incRow(i,true)).join("")||"Sin incidencias con estos filtros"));
+  },
+
+  antennas:async()=>{
+    const d=await api("/antennas",{},null);
+    const cards=d.antennas.map(a=>`<div class="border border-slate-800 rounded-lg p-3"><div class="flex justify-between"><b>${esc(a.antenna_id)}</b>${B(a.status)}</div><div class="text-sm text-slate-400">${ZONES[a.zone_id]||esc(a.zone_id)}</div><div class="text-2xl font-bold mt-1">${a.current_traffic_gb_min??"–"} <span class="text-sm font-normal text-slate-400">GB/min</span></div>${a.structural_failure_alert?`<div class="mt-1">${badge("Falla estructural","bg-red-700")}</div>`:""}</div>`).join("");
+    return card("Estado de la red ("+d.total_antennas+" antenas)",`<div class="grid grid-cols-2 md:grid-cols-4 gap-3">${cards}</div>`)+
+      card("Simular telemetría",`<div class="flex flex-wrap gap-2 items-center"><select class="${inp} !w-auto" onchange="A=this.value">${d.antennas.map(a=>`<option ${a.antenna_id==A?"selected":""}>${a.antenna_id}</option>`).join("")}</select>
+        <button class="${btn}" onclick="sim(0)">0 (inhabilitada)</button><button class="${btn}" onclick="sim(30)">30 (caída)</button><button class="${btn}" onclick="sim(95)">95 (normal)</button><button class="${btn}" onclick="sim(200)">200 (saturada)</button></div>`)+
+      card("Simular tormenta de reportes",`<div class="flex flex-wrap gap-2 items-center"><select id="sz" class="${inp} !w-auto">${opts(ZONES,"ZONA-SUR-01")}</select><button class="${btn}" onclick="storm()">Enviar 10 reportes de usuarios distintos</button></div><p class="text-sm text-slate-400 mt-2">Con 10 usuarios en la misma zona se crea un incidente colectivo. Si una antena de la zona está caída, se confirma la causa raíz.</p>`);
+  },
+
+  analytics:async()=>{
+    const d=await api("/analytics/summary",{},null);const o=d.overview;
+    const k=(l,v)=>`<div class="bg-slate-900 border border-slate-800 rounded-xl p-4"><div class="text-2xl font-bold">${v}</div><div class="text-sm text-slate-400">${l}</div></div>`;
+    const mx=a=>Math.max(1,...a);
+    const z=d.zones_ranking,t=d.problem_types_breakdown,an=d.problematic_antennas_ranking;
+    return `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">${k("Incidencias",o.total_incidents)}${k("Usuarios afectados",o.total_affected_users)}${k("Colectivos activos",o.active_collective_incidents)}${k("Alertas estructurales",o.structural_alerts_count)}</div>`+
+      card("Zonas con más incidencias",z.map(x=>bar(x.name,x.total_incidents,mx(z.map(y=>y.total_incidents)))).join("")||"Sin datos")+
+      card("Tipos de problema más reportados",t.map(x=>bar(TYPES[x.problem_type]||x.problem_type,x.count,mx(t.map(y=>y.count)))).join("")||"Sin datos")+
+      card("Antenas con más fallas",an.map(x=>bar(x.antenna_id+" · "+(ZONES[x.zone_id]||x.zone_id),x.total_anomalies,mx(an.map(y=>y.total_anomalies)))).join("")||"Sin datos")+
+      card("Incidencias por estado",Object.entries(d.incidents_by_status).map(([s,n])=>B(s)+" "+n).join(" &nbsp; ")||"Sin datos");
+  }
+};
+
+async function render(){
+  let v=(location.hash||"#login").slice(1);
+  if(!S)v="login";else if(!NAV[S.user.role].some(n=>n[0]==v))v=NAV[S.user.role][0][0];
+  const nav=S?NAV[S.user.role].map(([k,l])=>`<a href="#${k}" class="px-3 py-1 rounded-lg ${k==v?"bg-sky-600":"hover:bg-slate-800"}">${l}</a>`).join(""):"";
+  $("#app").innerHTML=`<header class="border-b border-slate-800 p-4 flex flex-wrap gap-3 items-center justify-between"><b class="text-lg">Red TeleCorp</b><nav class="flex gap-2">${nav}</nav>${S?`<div class="text-sm text-slate-400">${esc(S.user.email)} · ${S.user.role}<button class="underline ml-3" onclick="render()">Actualizar</button><button class="underline ml-3" onclick="save(null);location.hash='#login';render()">Salir</button></div>`:""}</header><main id="main" class="max-w-5xl mx-auto p-4">Cargando…</main>`;
+  try{$("#main").innerHTML=await views[v]()}catch(e){$("#main").innerHTML=card("No se pudo cargar",esc(e.message))}
+}
+addEventListener("hashchange",render);
+render();
+</script>
+</body>
+</html>

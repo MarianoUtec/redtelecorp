@@ -1,0 +1,14 @@
+{
+  "name": "telecorp-backend",
+  "version": "1.0.0",
+  "description": "Serverless Backend for Red TeleCorp Incident Detection and Management",
+  "scripts": {
+    "deploy": "serverless deploy",
+    "deploy:prod": "serverless deploy --stage prod"
+  },
+  "devDependencies": {
+    "serverless": "^3.38.0",
+    "serverless-python-requirements": "^6.1.2",
+    "serverless-step-functions": "^3.18.0"
+  }
+}
